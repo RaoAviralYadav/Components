@@ -1,9 +1,11 @@
-import React, { useState } from "react";
+import { useState, useMemo } from "react";
+import type { KeyboardEvent } from "react";
+import { FaSort, FaSortUp, FaSortDown } from "react-icons/fa";
+import "./DataTable.css";
 
 export interface Column<T> {
-  key: string;
+  key: keyof T;
   title: string;
-  dataIndex: keyof T;
   sortable?: boolean;
 }
 
@@ -12,7 +14,7 @@ export interface DataTableProps<T> {
   columns: Column<T>[];
   loading?: boolean;
   selectable?: boolean;
-  onRowSelect?: (selectedRows: T[]) => void;
+  onRowSelect?: (rows: T[]) => void;
 }
 
 export function DataTable<T>({
@@ -22,81 +24,111 @@ export function DataTable<T>({
   selectable,
   onRowSelect,
 }: DataTableProps<T>) {
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
-  const [selectedRows, setSelectedRows] = useState<T[]>([]);
+  const [sortCfg, setSortCfg] = useState<{ key: keyof T; dir: "asc" | "desc" }>();
+  const [selected, setSelected] = useState<T[]>([]);
 
-  const handleSort = (col: Column<T>) => {
-    if (!col.sortable) return;
-    let direction: "asc" | "desc" = "asc";
-    if (sortConfig && sortConfig.key === col.key && sortConfig.direction === "asc") {
-      direction = "desc";
-    }
-    setSortConfig({ key: col.key, direction });
+  const sortBy = (c: Column<T>) => {
+    if (!c.sortable) return;
+    setSortCfg(prev => ({
+      key: c.key,
+      dir: prev && prev.key === c.key && prev.dir === "asc" ? "desc" : "asc",
+    }));
   };
 
-  const sortedData = React.useMemo(() => {
-    if (!sortConfig) return data;
+  const sorted = useMemo(() => {
+    if (!sortCfg) return data;
     return [...data].sort((a, b) => {
-      const aVal = a[sortConfig.key as keyof T];
-      const bVal = b[sortConfig.key as keyof T];
-      if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1;
-      return 0;
+      const aVal = a[sortCfg.key];
+      const bVal = b[sortCfg.key];
+      if (aVal == null || bVal == null) return aVal ? 1 : bVal ? -1 : 0;
+      const numA = Number(aVal);
+      const numB = Number(bVal);
+      if (!Number.isNaN(numA) && !Number.isNaN(numB))
+        return sortCfg.dir === "asc" ? numA - numB : numB - numA;
+      const sA = String(aVal).toLowerCase();
+      const sB = String(bVal).toLowerCase();
+      return sortCfg.dir === "asc" ? sA.localeCompare(sB) : sB.localeCompare(sA);
     });
-  }, [data, sortConfig]);
+  }, [data, sortCfg]);
 
-  const toggleRow = (row: T) => {
+  const toggle = (row: T) => {
     if (!selectable) return;
-    const already = selectedRows.includes(row);
-    const updated = already ? selectedRows.filter(r => r !== row) : [...selectedRows, row];
-    setSelectedRows(updated);
-    onRowSelect?.(updated);
+    const next = selected.includes(row)
+      ? selected.filter(r => r !== row)
+      : [...selected, row];
+    setSelected(next);
+    onRowSelect?.(next);
   };
 
-  if (loading) return <div className="p-4 text-center">Loading...</div>;
-  if (data.length === 0) return <div className="p-4 text-center">No data available</div>;
+  const handleKey = (e: KeyboardEvent, c: Column<T>) => {
+    if (c.sortable && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      sortBy(c);
+    }
+  };
+
+  if (loading) return <div className="dt-empty">Loading…</div>;
+  if (!data.length) return <div className="dt-empty">No data</div>;
 
   return (
-    <table className="w-full border-collapse border border-gray-200">
-      <thead className="bg-gray-100">
-        <tr>
-          {selectable && <th className="border p-2">Select</th>}
-          {columns.map((col) => (
-            <th
-              key={col.key}
-              className="border p-2 cursor-pointer"
-              onClick={() => handleSort(col)}
-            >
-              {col.title}
-              {sortConfig?.key === col.key && (sortConfig.direction === "asc" ? " 🔼" : " 🔽")}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {sortedData.map((row, idx) => (
-          <tr key={idx} className="hover:bg-gray-50">
-            {selectable && (
-              <td className="border p-2">
-                <label className="inline-flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={selectedRows.includes(row)}
-                    onChange={() => toggleRow(row)}
-                  />
-                  <span className="sr-only">Select row {idx + 1}</span>
-                </label>
-
-              </td>
-            )}
-            {columns.map((col) => (
-              <td key={col.key} className="border p-2">
-                {String(row[col.dataIndex])}
-              </td>
-            ))}
+    <div className="dt-wrapper">
+      <table className="dt-table" cellPadding={0} cellSpacing={0}>
+        <thead>
+          <tr>
+            {selectable && <th className="dt-th dt-th-select">Select</th>}
+            {columns.map(c => {
+              const sortedNow = sortCfg?.key === c.key;
+              return (
+                <th
+                  key={String(c.key)}
+                  className={`dt-th ${c.sortable ? "dt-th-sortable" : ""}`}
+                  onClick={() => sortBy(c)}
+                  onKeyDown={e => handleKey(e, c)}
+                  tabIndex={c.sortable ? 0 : -1}
+                >
+                  <div className="dt-th-inner">
+                    <span className="dt-title">{c.title}</span>
+                    {c.sortable && (
+                      <span className="dt-sort-icon">
+                        {sortedNow
+                          ? sortCfg!.dir === "asc"
+                            ? <FaSortUp />
+                            : <FaSortDown />
+                          : <FaSort />}
+                      </span>
+                    )}
+                  </div>
+                </th>
+              );
+            })}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {sorted.map((row, i) => (
+            <tr key={i} className={`dt-tr ${i % 2 ? "dt-row-odd" : "dt-row-even"}`}>
+              {selectable && (
+                <td className="dt-td dt-td-select">
+                  <label className="dt-checkbox">
+                    {/* Screen-reader-only text provides a label without aria attributes */}
+                    <span className="sr-only">Select row {i + 1}</span>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(row)}
+                      onChange={() => toggle(row)}
+                    />
+                    <span className="dt-checkbox-check" />
+                  </label>
+                </td>
+              )}
+              {columns.map(c => (
+                <td key={String(c.key)} className="dt-td">
+                  <div className="dt-cell-content">{String(row[c.key] ?? "")}</div>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
